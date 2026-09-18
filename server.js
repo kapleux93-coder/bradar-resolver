@@ -77,12 +77,29 @@ async function resolveChannel(title, subs) {
       const full = await cl.invoke(new Api.channels.GetFullChannel({ channel: best }));
       about = (full && full.fullChat && full.fullChat.about) || '';
     } catch (e) { /* description optional */ }
+    // metrics from the last ~20 posts (free, unlimited — replaces Telemetr's capped stats):
+    // average views (=reach), average reactions, posts in the last 30 days, ER = (reactions+forwards)/views.
+    let metrics = null;
+    try {
+      const hist = await cl.invoke(new Api.messages.GetHistory({ peer: best, limit: 20 }));
+      const msgs = (hist.messages || []).filter(m => m.className === 'Message');
+      const now = Date.now() / 1000;
+      const avg = (arr) => arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : 0;
+      const views = msgs.map(m => Number(m.views) || 0).filter(v => v > 0);
+      const reacts = msgs.map(m => ((m.reactions && m.reactions.results) || []).reduce((s, r) => s + (Number(r.count) || 0), 0));
+      const fwds = msgs.map(m => Number(m.forwards) || 0);
+      const avgViews = avg(views), avgReacts = avg(reacts), avgFwds = avg(fwds);
+      const posts30 = msgs.filter(m => m.date && (now - m.date) <= 30 * 86400).length;
+      const er = avgViews ? Math.round((avgReacts + avgFwds) / avgViews * 1000) / 10 : 0;
+      metrics = { reach: avgViews, reactions: avgReacts, forwards: avgFwds, posts30, er, sample: msgs.length };
+    } catch (e) { /* metrics optional */ }
     return {
       username: best.username,
       link: 'https://t.me/' + best.username,
       subs: Number(best.participantsCount) || 0,
       adContact: extractAdContact(about, best.username),
       confidence: Math.round(bestScore * 100) / 100,
+      metrics,
     };
   });
 
