@@ -55,21 +55,34 @@ async function resolveChannel(title, subs) {
 
   const val = await queue(async () => {
     const cl = await getClient();
-    let res;
-    try { res = await cl.invoke(new Api.contacts.Search({ q: String(title).slice(0, 64), limit: 10 })); }
-    catch (e) {
-      const wait = e && e.seconds ? e.seconds : 0;                       // FLOOD_WAIT_x
-      if (wait && wait <= 30) { await sleep((wait + 1) * 1000); res = await cl.invoke(new Api.contacts.Search({ q: String(title).slice(0, 64), limit: 10 })); }
-      else throw e;
-    }
-    const chans = (res.chats || []).filter(ch => ch.className === 'Channel' && ch.username && ch.broadcast);
+    // try several query variants — many titles (with «•», «| Новая Рига», emoji) don't surface on a
+    // raw contacts.Search, but a cleaned / shortened version does. Stop early on a strong match.
+    const t = String(title).slice(0, 64);
+    const cleaned = t.replace(/[•|·—–]+/g, ' ').replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, ' ').replace(/\s+/g, ' ').trim();
+    const words = cleaned.split(' ').filter(Boolean);
+    const queries = [];
+    [t, cleaned, words.slice(0, 3).join(' '), words.slice(0, 2).join(' ')].forEach(q => { q = (q || '').trim(); if (q.length >= 3 && !queries.includes(q)) queries.push(q); });
+    const searchOnce = async (q) => {
+      try { return await cl.invoke(new Api.contacts.Search({ q: q.slice(0, 64), limit: 10 })); }
+      catch (e) { const w = e && e.seconds ? e.seconds : 0; if (w && w <= 30) { await sleep((w + 1) * 1000); try { return await cl.invoke(new Api.contacts.Search({ q: q.slice(0, 64), limit: 10 })); } catch (e2) { return null; } } return null; }
+    };
+    const seen = new Map();
     let best = null, bestScore = -1;
-    for (const ch of chans) {
+    const scoreChan = (ch) => {
       const ts = titleSim(title, ch.title || '');
       const cnt = Number(ch.participantsCount) || 0;
       const ss = (subs > 0 && cnt > 0) ? subsSim(subs, cnt) : 0;
-      const score = (subs > 0 && cnt > 0) ? (0.55 * ts + 0.45 * ss) : ts;
-      if (score > bestScore) { bestScore = score; best = ch; }
+      return (subs > 0 && cnt > 0) ? (0.55 * ts + 0.45 * ss) : ts;
+    };
+    for (const q of queries) {
+      const res = await searchOnce(q);
+      for (const ch of ((res && res.chats) || [])) {
+        if (ch.className !== 'Channel' || !ch.username || !ch.broadcast || seen.has(ch.username)) continue;
+        seen.set(ch.username, ch);
+        const s = scoreChan(ch);
+        if (s > bestScore) { bestScore = s; best = ch; }
+      }
+      if (best && bestScore >= 0.8) break;   // strong match → stop searching (fewer MTProto calls)
     }
     if (!best || bestScore < ACCEPT) return null;
     let about = '';
