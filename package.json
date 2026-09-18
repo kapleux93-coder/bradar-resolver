@@ -1,0 +1,14 @@
+{
+  "name": "bradar-resolver",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MTProto userbot that resolves a Telegram channel (title+subs) → real @username + advertising contact, on demand. Runs always-on (Render); BRADAR calls it over HTTP.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "login": "node login.js"
+  },
+  "dependencies": {
+    "telegram": "^2.22.0"
+  }
+}
